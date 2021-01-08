@@ -40,7 +40,7 @@ class Worker:
         self.model.load_state_dict(self.shared_model.state_dict())
         self.target_model = Model(self.env_params).to(self.device)
         self.target_model.load_state_dict(self.shared_model.state_dict())
-        self.optim = torch.optim.Adam(self.model.parameters(), lr=0.0005)
+        self.optim = torch.optim.Adam(self.shared_model.parameters())
         self.replay_buffer = ReplayBuffer(
                 self.args.buffer_size,
                 self.env_params)
@@ -86,16 +86,16 @@ class Worker:
             state, action, reward, next_state, done =\
                     self.replay_buffer.sample_buffer(self.args.batch_size)
             state = torch.tensor(state, device=self.device)
-            action = torch.tensor(action, device=self.device)
+            actions = torch.tensor(action, device=self.device).long()
             reward = torch.tensor(reward, device=self.device)
             next_state = torch.tensor(next_state, device=self.device)
             done = torch.tensor(done, device=self.device)
 
             with torch.no_grad():
-                next_action = self.target_model(next_state).detach().max(1)[0]
-                target_q = reward + (1 - done) * self.args.gamma * next_action
+                next_q = self.target_model(next_state).max(1)[0].detach()
+                target_q = reward + (1 - done) * self.args.gamma * next_q
 
-            predicted_q = self.model(state).gather(1, action.long()).max(1)[0]
+            predicted_q = self.model(state).gather(1, actions)
 
             loss = F.smooth_l1_loss(predicted_q.float(), target_q.float())
 
@@ -106,8 +106,10 @@ class Worker:
             for param in self.model.parameters():
                 param.grad.data.clamp_(-1, 1)
 
+
             # The critical section begins
             self.lock.acquire()
+            self.model.load_state_dict(self.shared_model.state_dict())
             self.copy_gradients(self.shared_model, self.model)
             self.optim.step()
             self.lock.release()
@@ -132,7 +134,6 @@ class Worker:
         for episode in range(self.args.episodes):
             start_time = time.time()
             for cycle in range(self.args.n_cycles):
-                done = False
                 state = self.env.reset()
                 for _ in range(self.env_params['max_timestep']):
                     action = self.noisey_action(state)
@@ -158,7 +159,6 @@ class Worker:
         self.model_eval()
         avg_reward = 0
         step = 0
-        done = False
         state = self.env.reset()
         ep_reward = 0
         for _ in range(self.env_params['max_timestep']):
@@ -174,6 +174,7 @@ class Worker:
         self.global_results['episode_length'][episode].append(step)
         self.lock.release()
         if self.worker_id == 0:
+            self.lock.acquire()
             avg_loss = np.mean(self.global_results['loss'][episode])
             avg_reward = np.mean(self.global_results['rewards'][episode])
             min_reward = np.min(self.global_results['rewards'][episode])
@@ -181,6 +182,7 @@ class Worker:
             episode_length = np.mean(
                     self.global_results['episode_length'][episode]
                     )
+            self.lock.release()
             self.tensorboard.update_stats(
                     Loss=avg_loss,
                     AvgReward=avg_reward,
