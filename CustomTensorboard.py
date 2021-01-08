@@ -1,4 +1,8 @@
+import os
 import tensorboard
+from keras.callbacks import TensorBoard
+import tensorflow as tf
+
 
 class ModifiedTensorBoard(TensorBoard):
     # Overriding init to set initial step and writer (we want one log file for all .fit() calls)

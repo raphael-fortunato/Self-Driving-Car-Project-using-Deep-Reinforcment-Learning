@@ -273,14 +273,8 @@ class CarlaEnvironmentWrapper(EnvironmentWrapper):
 		# Recognize that as a collision
 		self.car_speed = measurements.player_measurements.forward_speed
 		
-		if self.control.throttle > 0 and self.car_speed < 0.75 and self.control.brake==0.0 and self.is_game_ready_for_input:
-			self.unmoved_steps += 1.0
-			if self.unmoved_steps > self.kill_if_unmoved_for_n_steps:
-				is_collision = True
-				print("Car stuck somewhere lol")
-		elif self.unmoved_steps>0: self.unmoved_steps -= 0.50 #decay slowly, since it may be stuck and not accelerate few times
-		
-		if is_collision: print("Collision occured")
+		if is_collision:
+                    print("Collision occured")
 		
 		speed_reward = self.car_speed - 1
 		if speed_reward > 30.:
