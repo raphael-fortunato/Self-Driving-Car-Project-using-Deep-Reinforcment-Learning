@@ -1,2 +1,8 @@
+Environment/__pycache__/*
+agents/__pycache__/
+models/__pycache__/
+__pycache__
 .vim
 logs/
+*.pyc
+todo.txt

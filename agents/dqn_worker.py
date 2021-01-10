@@ -5,18 +5,19 @@ import numpy as np
 import time
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 import random
 import gym
 import math
 
 from Environment.carla_environment_wrapper import CarlaEnvironmentWrapper
-from model import Model
+from models.dqn_model import DQNModel
 from buffer import ReplayBuffer
 from CustomTensorboard import ModifiedTensorBoard
 
 
-class Worker:
+class DQNWorker:
     def __init__(
             self,
             shared_model,
@@ -36,11 +37,11 @@ class Worker:
         self.worker_id = worker_id
         self.lock = lock
         self.shared_model = shared_model
-        self.model = Model(self.env_params).to(self.device)
+        self.model = DQNModel(self.env_params).to(self.device)
         self.model.load_state_dict(self.shared_model.state_dict())
-        self.target_model = Model(self.env_params).to(self.device)
+        self.target_model = DQNModel(self.env_params).to(self.device)
         self.target_model.load_state_dict(self.shared_model.state_dict())
-        self.optim = torch.optim.Adam(self.shared_model.parameters())
+        self.optim = torch.optim.Adam(self.model.parameters())
         self.replay_buffer = ReplayBuffer(
                 self.args.buffer_size,
                 self.env_params)
@@ -63,7 +64,7 @@ class Worker:
             action = self.model(state).detach().cpu().numpy()
         return action.argmax()
 
-    def noisey_action(self, state):
+    def noisy_action(self, state):
         self.model_eval()
         with torch.no_grad():
             state = torch.tensor(state).to(self.device)
@@ -83,6 +84,7 @@ class Worker:
         self.model_train()
         losses = []
         for _ in range(self.args.n_batches):
+            # get the transition data
             state, action, reward, next_state, done =\
                     self.replay_buffer.sample_buffer(self.args.batch_size)
             state = torch.tensor(state, device=self.device)
@@ -90,35 +92,32 @@ class Worker:
             reward = torch.tensor(reward, device=self.device)
             next_state = torch.tensor(next_state, device=self.device)
             done = torch.tensor(done, device=self.device)
-
+            # Calculate target q values using target network
             with torch.no_grad():
                 next_q = self.target_model(next_state).max(1)[0].detach()
                 target_q = reward + (1 - done) * self.args.gamma * next_q
-
+                target_q = target_q.unsqueeze(1)
             predicted_q = self.model(state).gather(1, actions)
-
             loss = F.smooth_l1_loss(predicted_q.float(), target_q.float())
-
-            self.optim.zero_grad()
+            # The critical section begins
+            self.model.zero_grad()
             # Compute gradients
             loss.backward()
-
+            # nn.utils.clip_grad_norm_(
+                    # self.model.parameters(),
+                    # self.args.max_clip_norm
+                    # )
             for param in self.model.parameters():
                 param.grad.data.clamp_(-1, 1)
-
-
-            # The critical section begins
-            self.lock.acquire()
-            self.model.load_state_dict(self.shared_model.state_dict())
             self.copy_gradients(self.shared_model, self.model)
             self.optim.step()
-            self.lock.release()
             losses.append(loss.item())
 
         final_loss = np.sum(losses)
-        self.lock.acquire()
-        self.global_results['loss'][episode].append(final_loss)
-        self.lock.release()
+        with self.lock:
+            self.global_results['loss'][episode].append(final_loss)
+        # updatde model and target model
+        # self.model.load_state_dict(self.shared_model.state_dict())
         self.soft_update_target(self.model, self.target_model)
 
     def soft_update_target(self, source, target):
@@ -136,7 +135,7 @@ class Worker:
             for cycle in range(self.args.n_cycles):
                 state = self.env.reset()
                 for _ in range(self.env_params['max_timestep']):
-                    action = self.noisey_action(state)
+                    action = self.noisy_action(state)
                     new_state, reward, done, info = self.env.step(action)
                     self.replay_buffer.store_transition(
                             state,
@@ -151,8 +150,12 @@ class Worker:
             avg_reward = self.evaluate(episode)
             elapsed_time = time.time() - start_time
             if self.worker_id == 0:
-                print(f"Epoch {episode} of total of {self.args.episodes +1} epochs, average reward is: {avg_reward}.\
-                Elapsedtime: {int(elapsed_time /60)} minutes {int(elapsed_time %60)} seconds")
+                print(
+                    f"Epoch {episode} of total of {self.args.episodes +1} ",
+                    f"epochs, average reward is: {avg_reward}.",
+                    f"Elapsedtime: {int(elapsed_time /60)} minutes",
+                    f"{int(elapsed_time %60)} seconds"
+                    )
                 self.tensorboard.step = episode
 
     def evaluate(self, episode):
@@ -169,20 +172,18 @@ class Worker:
             step += 1
             if done:
                 break
-        self.lock.acquire()
-        self.global_results['rewards'][episode].append(ep_reward)
-        self.global_results['episode_length'][episode].append(step)
-        self.lock.release()
+        with self.lock:
+            self.global_results['rewards'][episode].append(ep_reward)
+            self.global_results['episode_length'][episode].append(step)
         if self.worker_id == 0:
-            self.lock.acquire()
-            avg_loss = np.mean(self.global_results['loss'][episode])
-            avg_reward = np.mean(self.global_results['rewards'][episode])
-            min_reward = np.min(self.global_results['rewards'][episode])
-            max_reward = np.max(self.global_results['rewards'][episode])
-            episode_length = np.mean(
-                    self.global_results['episode_length'][episode]
-                    )
-            self.lock.release()
+            with self.lock:
+                avg_loss = np.mean(self.global_results['loss'][episode])
+                avg_reward = np.mean(self.global_results['rewards'][episode])
+                min_reward = np.min(self.global_results['rewards'][episode])
+                max_reward = np.max(self.global_results['rewards'][episode])
+                episode_length = np.mean(
+                        self.global_results['episode_length'][episode]
+                        )
             self.tensorboard.update_stats(
                     Loss=avg_loss,
                     AvgReward=avg_reward,
@@ -192,15 +193,13 @@ class Worker:
         return int(avg_reward)
 
 
-
 def preprocess_img(img):
     img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     return img
+
 
 def preprocess_depth_map(normalized_depth):
     logdepth = np.ones(normalized_depth.shape) + \
         (np.log(normalized_depth) / 5.70378)
     logdepth = np.clip(logdepth, 0.0, 1.0)
     return logdepth
-
-

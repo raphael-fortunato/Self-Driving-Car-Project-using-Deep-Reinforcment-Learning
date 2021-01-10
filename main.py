@@ -4,8 +4,8 @@ import random
 import torch
 import torch.multiprocessing as mp
 
-from model import Model
-from worker import Worker
+from models.dqn_model import DQNModel
+from agents.dqn_worker import DQNWorker
 from args import get_args
 from Environment.carla_environment_wrapper import CarlaEnvironmentWrapper
 import gym
@@ -26,7 +26,7 @@ if __name__ == "__main__":
     np.random.seed(0)
     args = get_args()
     env_params = get_params()
-    shared_model = Model(env_params)
+    shared_model = DQNModel(env_params)
     shared_model.share_memory()
     lock = mp.Lock()
     manager = mp.Manager()
@@ -37,10 +37,16 @@ if __name__ == "__main__":
             manager.list() for x in range(args.episodes)
             ]
 
-    Worker(shared_model,lock, global_results, 0, args, env_params)
+    DQNWorker(
+            shared_model,
+            lock,
+            global_results,
+            0,
+            args,
+            env_params)
 
     # processes = [
-            # mp.Process(target=Worker, args=(
+            # mp.Process(target=DQNWorker, args=(
                 # shared_model,
                 # lock,
                 # global_results,

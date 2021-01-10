@@ -4,9 +4,9 @@ import torch.functional as F
 import torch.nn as nn
 
 
-class Model(nn.Module):
+class DQNModel(nn.Module):
     def __init__(self, env_params):
-        super(Model, self).__init__()
+        super(DQNModel, self).__init__()
 
         # self.conv1 = nn.Conv2d(
                 # in_channels=env_params['observation'][0],
