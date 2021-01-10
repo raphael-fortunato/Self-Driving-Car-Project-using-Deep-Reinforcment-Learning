@@ -40,7 +40,7 @@ class Worker:
         self.model.load_state_dict(self.shared_model.state_dict())
         self.target_model = Model(self.env_params).to(self.device)
         self.target_model.load_state_dict(self.shared_model.state_dict())
-        self.optim = torch.optim.Adam(self.shared_model.parameters())
+        self.optim = torch.optim.Adam(self.model.parameters())
         self.replay_buffer = ReplayBuffer(
                 self.args.buffer_size,
                 self.env_params)
@@ -94,8 +94,9 @@ class Worker:
             with torch.no_grad():
                 next_q = self.target_model(next_state).max(1)[0].detach()
                 target_q = reward + (1 - done) * self.args.gamma * next_q
+                target_q = target_q.unsqueeze(0)
 
-            predicted_q = self.model(state).gather(1, actions)
+            predicted_q = self.model(state).gather(1, actions.unsqueeze(0))
 
             loss = F.smooth_l1_loss(predicted_q.float(), target_q.float())
 
@@ -106,10 +107,8 @@ class Worker:
             for param in self.model.parameters():
                 param.grad.data.clamp_(-1, 1)
 
-
             # The critical section begins
             self.lock.acquire()
-            self.model.load_state_dict(self.shared_model.state_dict())
             self.copy_gradients(self.shared_model, self.model)
             self.optim.step()
             self.lock.release()
@@ -192,10 +191,10 @@ class Worker:
         return int(avg_reward)
 
 
-
 def preprocess_img(img):
     img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     return img
+
 
 def preprocess_depth_map(normalized_depth):
     logdepth = np.ones(normalized_depth.shape) + \

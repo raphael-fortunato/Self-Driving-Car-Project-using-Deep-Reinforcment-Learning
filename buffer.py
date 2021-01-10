@@ -11,7 +11,7 @@ class ReplayBuffer:
         self.new_state_mem = np.zeros(
                 (self.max_mem, *env_params['observation'])
                 )
-        self.action_mem = np.zeros((self.max_mem, 1))
+        self.action_mem = np.zeros((self.max_mem))
         self.reward_mem = np.zeros(self.max_mem)
         self.done_mem = np.zeros(self.max_mem)
 
