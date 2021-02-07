@@ -40,7 +40,7 @@ class Worker:
         self.model.load_state_dict(self.shared_model.state_dict())
         self.target_model = Model(self.env_params).to(self.device)
         self.target_model.load_state_dict(self.shared_model.state_dict())
-        self.optim = torch.optim.Adam(self.model.parameters(), lr=0.0005)
+        self.optim = torch.optim.RMSprop(self.model.parameters(), lr=0.0005)
         self.replay_buffer = ReplayBuffer(
                 self.args.buffer_size,
                 self.env_params)
@@ -108,7 +108,7 @@ class Worker:
 
             # The critical section begins
             self.lock.acquire()
-            self.copy_gradients(self.shared_model, self.model)
+            # self.copy_gradients(self.shared_model, self.model)
             self.optim.step()
             self.lock.release()
             losses.append(loss.item())
@@ -150,8 +150,10 @@ class Worker:
             avg_reward = self.evaluate(episode)
             elapsed_time = time.time() - start_time
             if self.worker_id == 0:
-                print(f"Epoch {episode} of total of {self.args.episodes +1} epochs, average reward is: {avg_reward}.\
-                Elapsedtime: {int(elapsed_time /60)} minutes {int(elapsed_time %60)} seconds")
+                print(f"Epoch {episode} of total of {self.args.episodes +1}",
+                        f"epochs, average reward is: {avg_reward}.",
+                        f"Elapsedtime: {int(elapsed_time /60)} minutes ",
+                        f"{int(elapsed_time %60)} seconds")
                 self.tensorboard.step = episode
 
     def evaluate(self, episode):

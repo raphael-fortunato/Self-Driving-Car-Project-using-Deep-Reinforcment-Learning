@@ -37,7 +37,7 @@ if __name__ == "__main__":
             manager.list() for x in range(args.episodes)
             ]
 
-    Worker(shared_model,lock, global_results, 0, args, env_params)
+    Worker(shared_model, lock, global_results, 0, args, env_params)
 
     # processes = [
             # mp.Process(target=Worker, args=(
