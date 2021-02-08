@@ -10,42 +10,34 @@ import random
 import gym
 import math
 
-from Environment.carla_environment_wrapper import CarlaEnvironmentWrapper
 from model import Model
 from buffer import ReplayBuffer
 from CustomTensorboard import ModifiedTensorBoard
+from env_wrapper import VectorEnv
 
 
 class Worker:
     def __init__(
             self,
-            shared_model,
-            lock,
-            global_results,
-            worker_id,
+            env,
+            test_env,
             args,
             env_params
             ):
-        # self.env = CarlaEnvironmentWrapper(cameras='Depth')
-        self.env = gym.make('CartPole-v0')
+        self.env = env
+        self.test_env = test_env
         self.env_params = env_params
         self.args = args
         self.device = torch.device(
                 "cuda:0" if self.args.cuda else "cpu")
-        self.global_results = global_results
-        self.worker_id = worker_id
-        self.lock = lock
-        self.shared_model = shared_model
         self.model = Model(self.env_params).to(self.device)
-        self.model.load_state_dict(self.shared_model.state_dict())
         self.target_model = Model(self.env_params).to(self.device)
-        self.target_model.load_state_dict(self.shared_model.state_dict())
+        self.target_model.load_state_dict(self.model.state_dict())
         self.optim = torch.optim.RMSprop(self.model.parameters(), lr=0.0005)
         self.replay_buffer = ReplayBuffer(
                 self.args.buffer_size,
                 self.env_params)
-        if self.worker_id == 0:
-            self.tensorboard = ModifiedTensorBoard(f"{time.time()}")
+        self.tensorboard = ModifiedTensorBoard(f"{time.time()}")
         self.run()
 
     def model_eval(self):
@@ -70,14 +62,7 @@ class Worker:
             action = self.model(state).detach().cpu()
             probs = F.softmax(action, 0)
             probs = torch.distributions.Categorical(probs)
-        return probs.sample().item()
-
-    def copy_gradients(self, target, source):
-        for shared_param, param in zip(
-                target.parameters(),
-                source.parameters()):
-            if param.grad is not None:
-                shared_param._grad = param.grad.clone().cpu()
+        return np.array(probs.sample())
 
     def update_model(self, episode):
         self.model_train()
@@ -95,7 +80,7 @@ class Worker:
                 next_action = self.target_model(next_state).detach().max(1)[0]
                 target_q = reward + (1 - done) * self.args.gamma * next_action
 
-            predicted_q = self.model(state).gather(1, action.long()).max(1)[0]
+            predicted_q = self.model(state).gather(1, action.unsqueeze(1).long()).max(1)[0]
 
             loss = F.smooth_l1_loss(predicted_q.float(), target_q.float())
 
@@ -106,17 +91,11 @@ class Worker:
             for param in self.model.parameters():
                 param.grad.data.clamp_(-1, 1)
 
-            # The critical section begins
-            self.lock.acquire()
-            # self.copy_gradients(self.shared_model, self.model)
             self.optim.step()
-            self.lock.release()
             losses.append(loss.item())
 
-        final_loss = np.sum(losses)
-        self.lock.acquire()
-        self.global_results['loss'][episode].append(final_loss)
-        self.lock.release()
+        final_loss = np.mean(losses)
+        self.tensorboard.update_stats(Loss=final_loss)
         self.soft_update_target(self.model, self.target_model)
 
     def soft_update_target(self, source, target):
@@ -140,57 +119,49 @@ class Worker:
                     self.replay_buffer.store_transition(
                             state,
                             action,
-                            reward,
+                            reward / self.env_params['reward_range'],
                             new_state,
                             done)
                     state = new_state
-                    if done:
-                        break
             self.update_model(episode)
             avg_reward = self.evaluate(episode)
             elapsed_time = time.time() - start_time
-            if self.worker_id == 0:
-                print(f"Epoch {episode} of total of {self.args.episodes +1}",
-                        f"epochs, average reward is: {avg_reward}.",
-                        f"Elapsedtime: {int(elapsed_time /60)} minutes ",
-                        f"{int(elapsed_time %60)} seconds")
-                self.tensorboard.step = episode
+            print(f"Epoch {episode} of total of {self.args.episodes +1}",
+                    f"epochs, average reward is: {avg_reward}.",
+                    f"Elapsedtime: {int(elapsed_time /60)} minutes ",
+                    f"{int(elapsed_time %60)} seconds")
+            self.tensorboard.step = episode
 
     def evaluate(self, episode):
         self.model_eval()
-        avg_reward = 0
-        step = 0
-        done = False
-        state = self.env.reset()
-        ep_reward = 0
-        for _ in range(self.env_params['max_timestep']):
-            action = self.greedy_action(state)
-            new_state, reward, done, _ = self.env.step(action)
-            ep_reward += reward
-            state = new_state
-            step += 1
-            if done:
-                break
-        self.lock.acquire()
-        self.global_results['rewards'][episode].append(ep_reward)
-        self.global_results['episode_length'][episode].append(step)
-        self.lock.release()
-        if self.worker_id == 0:
-            avg_loss = np.mean(self.global_results['loss'][episode])
-            avg_reward = np.mean(self.global_results['rewards'][episode])
-            min_reward = np.min(self.global_results['rewards'][episode])
-            max_reward = np.max(self.global_results['rewards'][episode])
-            episode_length = np.mean(
-                    self.global_results['episode_length'][episode]
-                    )
-            self.tensorboard.update_stats(
-                    Loss=avg_loss,
-                    AvgReward=avg_reward,
-                    MinReward=min_reward,
-                    MaxReward=max_reward,
-                    EpisodeLength=episode_length)
+        total_rewards = []
+        total_steps = []
+        for _ in range(self.args.num_eval_eps):
+            avg_reward = 0
+            step = 0
+            done = False
+            state = self.test_env.reset()
+            ep_reward = 0
+            for _ in range(self.env_params['max_timestep']):
+                action = self.greedy_action(state)
+                new_state, reward, done, _ = self.test_env.step(action)
+                ep_reward += reward
+                state = new_state
+                step += 1
+                if done:
+                    break
+            total_steps.append(step)
+            total_rewards.append(ep_reward)
+        avg_reward = np.mean(total_rewards)
+        min_reward = np.min(total_rewards)
+        max_reward = np.max(total_rewards)
+        episode_length = np.mean(total_steps)
+        self.tensorboard.update_stats(
+                AvgReward=avg_reward,
+                MinReward=min_reward,
+                MaxReward=max_reward,
+                EpisodeLength=episode_length)
         return int(avg_reward)
-
 
 
 def preprocess_img(img):

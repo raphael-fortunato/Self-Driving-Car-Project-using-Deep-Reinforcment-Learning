@@ -4,14 +4,24 @@ import argparse
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
+            '--num_envs',
+            type=int,
+            default=8,
+            help='number of episodes')
+    parser.add_argument(
             '--episodes',
             type=int,
-            default=500,
+            default=100,
             help='number of episodes')
     parser.add_argument(
             '--n-cycles',
             type=int,
             default=50,
+            help='number of cycles per epoch')
+    parser.add_argument(
+            '--num_eval_eps',
+            type=int,
+            default=5,
             help='number of cycles per epoch')
     parser.add_argument(
             '--n-batches',
@@ -21,7 +31,7 @@ def get_args():
     parser.add_argument(
             '--batch_size',
             type=int,
-            default=256,
+            default=2096,
             help='size of the batch to pass through the network')
     parser.add_argument(
             '--n-evaluate',
