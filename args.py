@@ -6,17 +6,17 @@ def get_args():
     parser.add_argument(
             '--num_envs',
             type=int,
-            default=8,
+            default=12,
             help='number of episodes')
     parser.add_argument(
             '--episodes',
             type=int,
-            default=100,
+            default=1000,
             help='number of episodes')
     parser.add_argument(
             '--n-cycles',
             type=int,
-            default=50,
+            default=1,
             help='number of cycles per epoch')
     parser.add_argument(
             '--num_eval_eps',
@@ -24,20 +24,10 @@ def get_args():
             default=5,
             help='number of cycles per epoch')
     parser.add_argument(
-            '--n-batches',
-            type=int,
-            default=40,
-            help='number of batch per epoch')
-    parser.add_argument(
             '--batch_size',
             type=int,
-            default=2096,
+            default=64,
             help='size of the batch to pass through the network')
-    parser.add_argument(
-            '--n-evaluate',
-            type=int,
-            default=20,
-            help='number of evaluate episodes')
     parser.add_argument(
             '--buffer_size',
             type=int,
@@ -54,20 +44,15 @@ def get_args():
             default=.95,
             help='polyak ratio')
     parser.add_argument(
-            '--epsilon',
+            '--epsilon_decay',
             type=float,
-            default=.98,
-            help='start epsilon')
+            default=0.997,
+            help='epsilon decay')
     parser.add_argument(
-            '--max_clip_norm',
-            type=int,
-            default=10,
-            help='max gradient norm')
-    parser.add_argument(
-            '--num_workers',
-            type=int,
-            default=12,
-            help='num workers')
+            '--min_epsilon',
+            type=float,
+            default=.1,
+            help='min epsilon')
     parser.add_argument(
             '--cuda',
             action='store_true',

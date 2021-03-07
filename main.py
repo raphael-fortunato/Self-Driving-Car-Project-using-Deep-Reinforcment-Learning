@@ -30,6 +30,7 @@ if __name__ == "__main__":
     args = get_args()
 
     make_env_fn = lambda: gym.make('LunarLander-v2')
+    # make_env_fn = lambda: gym.make('CartPole-v1')
     vec_envs = VectorEnv(make_env_fn, n=args.num_envs)
     seeds = [random.randint(0, 9999) for _ in range(args.num_envs)]
     vec_envs.seed(seeds)

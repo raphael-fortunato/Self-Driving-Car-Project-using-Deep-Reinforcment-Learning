@@ -67,7 +67,7 @@ class Worker:
     def update_model(self, episode):
         self.model_train()
         losses = []
-        for _ in range(self.args.n_batches):
+        for _ in range(self.args.num_envs):
             state, action, reward, next_state, done =\
                     self.replay_buffer.sample_buffer(self.args.batch_size)
             state = torch.tensor(state, device=self.device)
@@ -76,13 +76,19 @@ class Worker:
             next_state = torch.tensor(next_state, device=self.device)
             done = torch.tensor(done, device=self.device)
 
+            predicted_q = self.model.forward(state)[
+                    np.arange(0, self.args.batch_size),
+                    action.long()]
             with torch.no_grad():
-                next_action = self.target_model(next_state).detach().max(1)[0]
-                target_q = reward + (1 - done) * self.args.gamma * next_action
+                next_state_q = self.model.forward(next_state)
+                best_action = torch.argmax(next_state_q, axis=1)
+                q_next = self.target_model.forward(next_state)[
+                        np.arange(0, self.args.batch_size),
+                        best_action]
+                target_q = reward + (1 - done) * self.args.gamma * q_next
+                target_q = target_q.float()
 
-            predicted_q = self.model(state).gather(1, action.unsqueeze(1).long()).max(1)[0]
-
-            loss = F.smooth_l1_loss(predicted_q.float(), target_q.float())
+            loss = F.mse_loss(predicted_q, target_q)
 
             self.optim.zero_grad()
             # Compute gradients
@@ -126,10 +132,11 @@ class Worker:
             self.update_model(episode)
             avg_reward = self.evaluate(episode)
             elapsed_time = time.time() - start_time
-            print(f"Epoch {episode} of total of {self.args.episodes +1}",
-                    f"epochs, average reward is: {avg_reward}.",
-                    f"Elapsedtime: {int(elapsed_time /60)} minutes ",
-                    f"{int(elapsed_time %60)} seconds")
+            print(
+                f"Epoch {episode} of total of {self.args.episodes +1}",
+                f"epochs, average reward is: {avg_reward}.",
+                f"Elapsedtime: {int(elapsed_time /60)} minutes ",
+                f"{int(elapsed_time %60)} seconds")
             self.tensorboard.step = episode
 
     def evaluate(self, episode):
